@@ -46,10 +46,16 @@ struct MovieSearchView: View {
     @ViewBuilder
     private var contentView: some View {
         if viewModel.movies.isEmpty {
-            Spacer()
-            Text("No results")
-                .foregroundColor(.gray)
-            Spacer()
+            if viewModel.isLoading{
+                Spacer()
+                ProgressView()
+                Spacer()
+            } else {
+                Spacer()
+                Text("No results")
+                    .foregroundColor(.gray)
+                Spacer()
+            }
         } else {
             movieList
         }
@@ -63,8 +69,16 @@ struct MovieSearchView: View {
                         MovieDetailView(movie: movie)
                     } label: {
                         MovieRow(movie: movie)
+                            .onAppear {
+                                viewModel.loadMoreMoviesIfNeeded(currentItem: movie)
+                            }
                     }
                     Divider()
+                }
+                
+                if viewModel.isPaginating {
+                    ProgressView()
+                        .padding()
                 }
             }
         }
