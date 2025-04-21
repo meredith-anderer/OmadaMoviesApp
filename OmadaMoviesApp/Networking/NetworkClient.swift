@@ -1,4 +1,15 @@
+//
+//  NetworkClient.swift
+//  OmadaMoviesApp
+//
+//  Created by Meredith Anderer on 4/21/25.
+//
+
 import Foundation
+
+protocol NetworkClientProtocol {
+    func request<T: Decodable>(_ endpoint: Endpoint, service: NetworkService) async throws -> T
+}
 
 enum NetworkError: Error {
     case invalidURL
@@ -8,13 +19,19 @@ enum NetworkError: Error {
     case unknown(Error)
 }
 
-class NetworkClient {
+protocol URLSessionProtocol {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse)
+}
+
+extension URLSession: URLSessionProtocol {}
+
+class NetworkClient: NetworkClientProtocol {
     // Singleton instance
     static let shared = NetworkClient()
     
-    private let session: URLSession
+    private let session: URLSessionProtocol
     
-    init(session: URLSession = .shared) {
+    init(session: URLSessionProtocol = URLSession.shared) {
         self.session = session
     }
     

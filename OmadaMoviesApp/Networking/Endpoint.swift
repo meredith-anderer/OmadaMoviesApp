@@ -1,3 +1,10 @@
+//
+//  Endpoint.swift
+//  OmadaMoviesApp
+//
+//  Created by Meredith Anderer on 4/21/25.
+//
+
 import Foundation
 
 enum HTTPMethod: String {

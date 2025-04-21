@@ -9,126 +9,133 @@ import Foundation
 import Combine
 
 @MainActor
-class MovieSearchViewModel: ObservableObject {
-    @Published private(set) var movies: [Movie] = []
+class MovieSearchViewModel<S: Scheduler>: ObservableObject {
     @Published var searchText: String = ""
-    @Published private(set) var isLoading: Bool = false
-    @Published private(set) var isPaginating: Bool = false
-    @Published private(set) var errorMessage: String? = nil
+    @Published private(set) var isNewSearchLoading = false
+    @Published private(set) var movies: [Movie] = []
+    @Published private(set) var newSearchError: String?
+    @Published private(set) var isPaginationLoading = false
+    @Published private(set) var paginationError: String?
     
-    private let movieService = MovieService()
+    private var currentPage = 1
+    private var totalPages = 1
     private var searchTask: Task<Void, Never>?
+    private var paginationTask: Task<Void, Never>?
     private var searchTextCancellable: AnyCancellable?
-    private var currentPage: Int = 1
-    private var totalPages: Int = 1
+    private let scheduler: S
     
-    init() {
+    private let executor: MovieSearchExecutor
+    
+    init(
+        executor: MovieSearchExecutor = MovieSearchExecutorAdapter(),
+        scheduler: S = RunLoop.main
+    ) {
+        self.executor = executor
+        self.scheduler = scheduler
         observeSearchText()
     }
     
     private func observeSearchText() {
         searchTextCancellable = $searchText
             .removeDuplicates()
-            .debounce(for: 0.5, scheduler: DispatchQueue.main)
-            .sink { [weak self] searchText in
-                guard !searchText.isEmpty else {
-                    self?.resetSearch()
-                    return
-                }
-                self?.performSearch(with: searchText)
+            .debounce(for: .milliseconds(300), scheduler: scheduler)
+            .sink { [weak self] newText in
+                self?.handleSearchTextChange(newText)
             }
     }
     
-    private func resetSearch() {
-        movies = []
+    private func handleSearchTextChange(_ text: String) {
+        guard !text.isEmpty else {
+            movies = []
+            newSearchError = nil
+            paginationError = nil
+            currentPage = 1
+            totalPages = 1
+            return
+        }
+        performSearch(query: text)
+    }
+    
+    func performSearch(query: String) {
+        searchTask?.cancel()
+        
         currentPage = 1
         totalPages = 1
-        errorMessage = nil
-        searchTask?.cancel()
-    }
-    
-    private func performSearch(with query: String) {
-        // Cancel any existing search task
-        searchTask?.cancel()
+        movies = []
+        newSearchError = nil
+        paginationError = nil
         
-        // Reset state for new search
-        resetSearch()
-        
-        // Store the query we're searching for
-        let currentQuery = query
-        
-        // Create a new search task
         searchTask = Task {
-            isLoading = true
-            errorMessage = nil
-            defer {
-                isLoading = false
-            }
+            isNewSearchLoading = true
             
             do {
-                let response = try await movieService.searchMovies(query: query, page: currentPage)
+                let response = try await executor.search(query: query, page: 1)
+                guard !Task.isCancelled && self.searchText == query else { return }
                 
-                // Verify this is still the current search
-                guard !Task.isCancelled && searchText == currentQuery else { return }
-                
-                movies = response.results
+                currentPage = 1
                 totalPages = response.totalPages
+                movies = response.results
+                
             } catch {
-                // Only show error if this is still the current search
-                if searchText == currentQuery {
-                    errorMessage = error.localizedDescription
+                if !Task.isCancelled {
+                    self.newSearchError = error.localizedDescription
                 }
             }
+            
+            isNewSearchLoading = false
         }
     }
     
     func loadMoreMoviesIfNeeded(currentItem item: Movie?) {
-        guard let item = item else {
-            return
-        }
+        guard
+            let item,
+            let index = movies.firstIndex(where: { $0.id == item.id }),
+            index >= movies.count - 5,
+            currentPage < totalPages,
+            !isPaginationLoading,
+            paginationTask == nil
+        else { return }
         
-        let thresholdIndex = movies.index(movies.endIndex, offsetBy: -5)
-        if movies.firstIndex(where: { $0.id == item.id }) == thresholdIndex {
-            loadNextPage()
+        loadNextPage(query: searchText)
+    }
+    
+    private func loadNextPage(query: String) {
+        guard !isPaginationLoading else { return }
+        
+        paginationTask = Task {
+            isPaginationLoading = true
+            paginationError = nil
+            let nextPage = currentPage + 1
+            
+            do {
+                let response = try await executor.search(query: query, page: nextPage)
+                
+                guard !Task.isCancelled && self.searchText == query else { return }
+                
+                currentPage = nextPage
+                totalPages = response.totalPages
+                movies.append(contentsOf: response.results)
+                
+            } catch {
+                if !Task.isCancelled {
+                    paginationError = error.localizedDescription
+                }
+            }
+            
+            isPaginationLoading = false
+            paginationTask = nil
         }
     }
     
-    private func loadNextPage() {
-        guard !isLoading,
-              !isPaginating,
-              currentPage < totalPages,
-              !searchText.isEmpty else {
-            return
-        }
-        
-        searchTask?.cancel()
-        
-        // Store the query we're paginating for
-        let currentQuery = searchText
-        
-        searchTask = Task {
-            isPaginating = true
-            errorMessage = nil
-            defer {
-                isPaginating = false
-            }
-            
-            do {
-                let nextPage = currentPage + 1
-                let response = try await movieService.searchMovies(query: currentQuery, page: nextPage)
-                
-                // Verify this is still the current search
-                guard !Task.isCancelled && searchText == currentQuery else { return }
-                
-                movies.append(contentsOf: response.results)
-                currentPage = response.page
-                totalPages = response.totalPages
-            } catch {
-                // Only show error if this is still the current search
-                if searchText == currentQuery {
-                    errorMessage = error.localizedDescription
-                }
-            }
-        }
+    func retrySearch() {
+        guard !searchText.isEmpty else { return }
+        performSearch(query: searchText)
+    }
+    
+    func retryPagination() {
+        guard !searchText.isEmpty else { return }
+        paginationError = nil
+        loadNextPage(query: searchText)
     }
 }
+
