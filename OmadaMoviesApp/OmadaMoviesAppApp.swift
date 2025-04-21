@@ -11,7 +11,7 @@ import SwiftUI
 struct OmadaMoviesAppApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MovieSearchView()
         }
     }
 }
